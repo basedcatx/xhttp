@@ -6,22 +6,22 @@
 #include <stdlib.h>
 
 void LogErrorWithReason(const char *reason, const char *details) {
-    puts(reason);
-    puts(" : ");
-    puts(details);
-    puts("\n");
+    fputs(reason, stdout);
+    fputs(" : ", stdout);
+    fputs(details, stdout);
+    fputs("\n", stdout);
 }
 
 void LogErrorWithReasonX(const char *reason, const char *details) {
-    puts(reason);
-    puts(" : ");
-    puts(details);
-    puts("\n");
+    fputs(reason, stdout);
+    fputs(" : ", stdout);
+    fputs(details, stdout);
+    fputs("\n", stdout);
     exit(EXIT_FAILURE);
 }
 
 void LogSystemError(const char *reason) {
     perror(reason);
-    puts("\n");
+    fputs("\n", stdout);
     exit(EXIT_FAILURE);
 }

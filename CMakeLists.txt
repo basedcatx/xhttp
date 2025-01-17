@@ -3,4 +3,36 @@ project(xhttp C)
 
 set(CMAKE_C_STANDARD 11)
 
-add_executable(xhttp client.c)
+find_package(ZLIB REQUIRED)
+find_package(OpenSSL REQUIRED)
+
+add_executable(xhttp_c
+        client/client.c
+        utils/TcpClientUtility.c
+        logger/Logger.c
+        includes/crypt.h
+        includes/utils.h
+        utils/TcpServerUtility.c
+        utils/SocketUtility.c
+        utils/Compressor.c
+        Encoder/Encoder.c
+        includes/packet.h
+        crypt/AES.c crypt/AES.c utils/Utils.c utils/Utils.c utils/AddressUtility.c)
+
+add_executable(test_c
+        tests/test.c
+        utils/TcpClientUtility.c
+        logger/Logger.c
+        includes/crypt.h
+        includes/utils.h
+        utils/TcpServerUtility.c
+        utils/SocketUtility.c
+        utils/Compressor.c
+        Encoder/Encoder.c
+        includes/packet.h
+        crypt/AES.c crypt/AES.c utils/Utils.c utils/Utils.c utils/AddressUtility.c)
+
+target_link_libraries(test_c PRIVATE ZLIB::ZLIB)
+target_link_libraries(xhttp_c PRIVATE ZLIB::ZLIB)
+target_link_libraries(xhttp_c PRIVATE OpenSSL::Crypto OpenSSL::SSL)
+target_link_libraries(test_c PRIVATE OpenSSL::Crypto OpenSSL::SSL)
