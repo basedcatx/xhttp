@@ -14,11 +14,14 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#define STREAM_BUF_SIZE 2048
+#define READ_CHUNK_SIZE 32
+
 void set_nonblocking_socket(int sock);
 int CreateServerSocket(const char *service);
 int CreateClientSocket(const char *host, const char *service);
-int zlib_compress (const uint8_t *inBuf, uint8_t *outBuf, size_t bufSize);
-int zlib_decompress(const uint8_t *input, uint8_t *output, size_t bufferSize);
+uint8_t *zlib_compress_dynamic(const uint8_t *inBuf, size_t bufSize, size_t *outCompressedSize);
+uint8_t *zlib_decompress_dynamic(const uint8_t *inBuf, size_t compressedSize, size_t *outDecompressedSize);
 void printSocketAddress(const struct sockaddr *address, FILE *stream);
 int AcceptTCPConnection(int serveSocks);
 

@@ -8,7 +8,6 @@
 #include <stdio.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <errno.h>
 #include <unistd.h>
 #include "../includes/utils.h"
 
@@ -64,22 +63,37 @@ int AcceptTCPConnection(int serveSocks) {
     FD_ZERO(&sock_fd_set);
     FD_SET(serveSocks, &sock_fd_set);
 
-    struct timeval timeout = {5, 0};
-    int ready = select(serveSocks + 1, &sock_fd_set, NULL, NULL, &timeout);
+    size_t tBuf = 1;
+    setsockopt(serveSocks, SOL_SOCKET, SO_REUSEPORT, &tBuf, sizeof(tBuf));
 
-    if (ready > 0 && FD_ISSET(serveSocks, &sock_fd_set)) {
-        int clntSock = accept(serveSocks, (struct sockaddr *) &clntAddr, &clntAddrLen);
+    while (1) {
+        struct timeval timeout = {5, 0};
+        int ready = select(serveSocks + 1, &sock_fd_set, NULL, NULL, &timeout);
 
-        if (clntSock < 0) {
-            LogSystemError("accept() failed!");
+        if (ready == -1) {
+            LogSystemError("select() failed!");
+            break;
         }
 
-        fputs("Handling client ", stdout);
-        printSocketAddress((const struct sockaddr *) &clntAddr , stdout);
-        fputc('\n', stdout);
-        return clntSock;
+        if (ready == 0) {
+            LogErrorWithReason("select() timed out. No incoming connection.", "");
+            continue;
+        }
+
+        if (FD_ISSET(serveSocks, &sock_fd_set)) {
+            int clntSock = accept(serveSocks, (struct sockaddr *)&clntAddr, &clntAddrLen);
+            if (clntSock < 0) {
+                LogSystemError("accept() failed!");
+                continue;
+            }
+
+            fputs("Handling client ", stdout);
+            printSocketAddress((const struct sockaddr *)&clntAddr, stdout);
+            fputc('\n', stdout);
+            return clntSock;
+        }
     }
-    return -1;
+    return -1; // In case of persistent failure
 }
 
 

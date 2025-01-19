@@ -1,0 +1,32 @@
+sudo apt install squid
+open sudo nano /etc/squid/squid.conf
+add http_port [port-number]
+modify http_access deny all to http_access allow all
+save and done
+
+```terminal
+sudo ulimit -n 65536
+
+you can set persistent connections
+
+```squid config
+client_persistent_connections on
+server_persistent_connections on
+
+You can optimize OS open files
+
+```term
+hard nofile 65536
+soft nofile 65536
+
+sudo mkdir /etc/squid/ssl_cert
+sudo chmod 700 /etc/squid/ssl_cert
+
+sudo openssl genrsa -out /etc/squid/ssl_cert/myCA.key 2048
+sudo openssl req -new -x509 -days 365 -key /etc/squid/ssl_cert/myCA.key -out /etc/squid/ssl_cert/myCA.pem -subj "/C=US/ST=State/L=City/O=Organization/OU=Department/CN=ProxyCA"
+
+sudo chown -R proxy:proxy /etc/squid/ssl_cert
+
+sudo cp /etc/squid/ssl_cert/myCA.pem /usr/local/share/ca-certificates/myCA.crt
+sudo update-ca-certificates
+

@@ -10,10 +10,18 @@
 #include "../includes/utils.h"
 #include "../includes/crypt.h"
 
-int BufferEncode(struct Packet *pck, uint8_t *buffer, size_t bufSize) {
+uint8_t *BufferEncode(struct Packet *pck, size_t bufSize, int *bytesWritten) {
 
     if (bufSize < 24 + pck->msgLength) { // Minimum size: 4 + 4 + 1 + message
-        return -1; // Buffer too small
+        *bytesWritten = -1;
+        return NULL;
+    }
+
+    uint8_t *buffer = (uint8_t *) malloc(sizeof(uint8_t) * bufSize);
+
+    if (buffer == NULL) {
+        LogErrorWithReason("malloc failed", "buffer is null");
+        return NULL;
     }
 
     int offset = 0;
@@ -34,24 +42,49 @@ int BufferEncode(struct Packet *pck, uint8_t *buffer, size_t bufSize) {
     memcpy(buffer + offset, pck->message, pck->msgLength);
     offset += pck->msgLength;
 
-    uint8_t compressedBuf[1024], encryptedBuf[1024];
+    size_t compressed_size = 0;
 
-    uint8_t temporal_buffer[bufSize];
-    zlib_compress(buffer,temporal_buffer, bufSize);
-    aes_gcm_encrypt(temporal_buffer, bufSize, buffer);
 
-    return offset; // Return total bytes written
+    uint8_t *temporal_buffer = zlib_compress_dynamic(buffer, bufSize, (size_t *) &compressed_size);
+    if (temporal_buffer != NULL) {
+        printf("Hello!");
+    }
+
+    if (compressed_size > 0 && temporal_buffer != NULL) {
+        uint8_t *newBuf = realloc(buffer, compressed_size);
+        aes_gcm_encrypt(temporal_buffer, compressed_size, newBuf);
+        free(temporal_buffer);
+        *bytesWritten = compressed_size;
+        if (newBuf != NULL) {
+            return newBuf;
+        } else {
+            LogErrorWithReasonX("Encoder", "Buffer is null");
+            return NULL;
+        }
+    } else {
+        LogErrorWithReasonX("Compression", "An error occurred!");
+    }
+
+    *bytesWritten = compressed_size;
+    return NULL;
 }
 
 
 int BufferDecode(uint8_t *buffer, const size_t bufSize, struct Packet *pck) {
+
     if (bufSize < 9) { // Minimum size for header (4 + 4 + 1)
         return -1; // Buffer too small
     }
 
     uint8_t temporal_buffer[bufSize];
+
     aes_gcm_decrypt(buffer, bufSize, temporal_buffer);
-    zlib_decompress(temporal_buffer, buffer , bufSize);
+    size_t outDecompressedSize = 0;
+    buffer = zlib_decompress_dynamic(temporal_buffer, bufSize, &outDecompressedSize);
+
+    if (outDecompressedSize == 0) {
+        LogErrorWithReason("decompression", "ZLIB Decompression potential issues!");
+    }
 
     int offset = 0;
 
@@ -76,16 +109,12 @@ int BufferDecode(uint8_t *buffer, const size_t bufSize, struct Packet *pck) {
         return -2; // Buffer too small for message payload
     }
 
-    // Allocate memory for the message payload
-
-    pck->message = (uint8_t *) malloc(pck->msgLength);
-    if (pck->message == NULL) {
-        return -3; // Memory allocation failed
-    }
 
     // Copy message payload
      memcpy(pck->message, buffer + offset, pck->msgLength);
-//    offset += pck->msgLength;
+     offset += pck->msgLength;
+
+    free(buffer);
 
     return offset; // Return total bytes read
 }
@@ -97,6 +126,7 @@ void FrameToSocket(uint8_t *buf, size_t bufSize, FILE *in) {
 
     fwrite(buf, sizeof(uint8_t), bufSize, in);
 }
+
 
 void FrameFromSocket(uint8_t *outBuf, size_t bufSize, FILE *in) {
     if (fread(NULL, sizeof(uint8_t), strlen(HTTP_HEADER_STR), in) < strlen(HTTP_HEADER_STR)) {
