@@ -12,7 +12,7 @@
 #include <pthread.h>
 #include <stdbool.h>
 
-#define DEF_LOCAL_PORT "8081"
+#define DEF_LOCAL_PORT "8080"
 #define PROXY_HOST "localhost"
 #define PROXY_PORT "3128"
 
@@ -95,8 +95,9 @@ int main(int argc, char *argv[]) {
 }
 
 
+
 void *handle_client_thread(void *args) {
-    int socks = *(int *)args;
+    int socks = *(int *)args; // Client socket
     free(args);
 
     int proxySocket = CreateClientSocket(PROXY_HOST, PROXY_PORT);
@@ -106,17 +107,16 @@ void *handle_client_thread(void *args) {
         return NULL;
     }
 
-    // Set non-blocking mode
+    // Set both sockets to non-blocking mode
     set_nonblocking_socket(socks);
     set_nonblocking_socket(proxySocket);
 
     printf("New client connected: %d\n", socks);
 
-    uint8_t buf[STREAM_BUF_SIZE];
-    uint8_t buf_proxy[STREAM_BUF_SIZE];
+    uint8_t client_buf[STREAM_BUF_SIZE];
+    uint8_t proxy_buf[STREAM_BUF_SIZE];
 
     while (1) {
-        struct timeval timeout = {5, 0};
         fd_set read_fd_set, write_fd_set;
         FD_ZERO(&read_fd_set);
         FD_ZERO(&write_fd_set);
@@ -125,55 +125,69 @@ void *handle_client_thread(void *args) {
         FD_SET(proxySocket, &read_fd_set);
 
         int max_fd = (socks > proxySocket ? socks : proxySocket) + 1;
-        int readySock = select(max_fd, &read_fd_set, NULL, NULL, &timeout);
 
-        if (readySock > 0) {
-            // Handle data from client
-            if (FD_ISSET(socks, &read_fd_set)) {
-                ssize_t bytes_read = read(socks, buf, STREAM_BUF_SIZE - 1);
+        struct timeval timeout = {5, 0}; // 5-second timeout for select
+        int activity = select(max_fd, &read_fd_set, &write_fd_set, NULL, &timeout);
 
-                if (bytes_read > 0) {
-
-
-
-
-                    write(proxySocket, buf, bytes_read);  // Forward to proxy
-                } else if (bytes_read == 0) {
-                    printf("Client disconnected.\n");
-                    break;
-                } else {
-                    perror("Error reading from client");
-                    break;
-                }
-            }
-
-            // Handle data from proxy
-            if (FD_ISSET(proxySocket, &read_fd_set)) {
-                ssize_t bytes_read = read(proxySocket, buf_proxy, STREAM_BUF_SIZE - 1);
-                if (bytes_read > 0) {
-                    write(socks, buf_proxy, bytes_read);  // Forward to client
-                } else if (bytes_read == 0) {
-                    printf("Proxy disconnected.\n");
-                    break;
-                } else {
-                    perror("Error reading from proxy");
-                    break;
-                }
-            }
-        } else if (readySock == 0) {
-            // Timeout
-            printf("No data within timeout.\n");
-        } else {
-            // Error
+        if (activity < 0 && errno != EINTR) {
             perror("select");
             break;
+        }
+
+        if (activity == 0) {
+            // Timeout
+            continue;
+        }
+
+        // Handle data from client to proxy
+        if (FD_ISSET(socks, &read_fd_set)) {
+            size_t client_bytes = FrameFromSocket(client_buf, sizeof(client_buf), socks);
+            if (client_bytes > 0) {
+
+                //ssize_t proxy_sent = write(proxySocket, client_buf, client_bytes);
+                ssize_t proxy_sent = FrameToSocket(proxySocket, client_buf, sizeof(client_buf));
+                if (proxy_sent < 0 && errno != EAGAIN) {
+                    perror("Error writing to proxy");
+                    break;
+                }
+                printf("Sent %zu bytes to proxy\n", proxy_sent);
+            } else if (client_bytes == 0) {
+                printf("Client disconnected.\n");
+                break;
+            } else if (errno != EAGAIN) {
+                perror("Error reading from client");
+                break;
+            }
+        }
+
+        // Handle data from proxy to client
+        if (FD_ISSET(proxySocket, &read_fd_set)) {
+            // ssize_t proxy_bytes = read(proxySocket, proxy_buf, sizeof(proxy_buf));
+            ssize_t proxy_bytes = FrameFromSocket(proxy_buf, sizeof(proxy_buf), proxySocket);
+            if (proxy_bytes > 0) {
+                //ssize_t client_sent = write(socks, proxy_buf, proxy_bytes);
+                ssize_t client_sent = FrameToSocket(socks, proxy_buf, sizeof(proxy_buf));
+                if (client_sent < 0 && errno != EAGAIN) {
+                    perror("Error writing to client");
+                    break;
+                }
+                printf("Sent %zu bytes to client\n", client_sent);
+            } else if (proxy_bytes == 0) {
+                printf("Proxy disconnected.\n");
+                break;
+            } else if (errno != EAGAIN) {
+                perror("Error reading from proxy");
+                break;
+            }
         }
     }
 
     close(socks);
     close(proxySocket);
+    printf("Thread exiting for client %d.\n", socks);
     return NULL;
 }
+
 
 
 void cleanup_handler(int signo) {
@@ -192,3 +206,4 @@ void cleanup() {
     }
     exit(EXIT_FAILURE);
 }
+

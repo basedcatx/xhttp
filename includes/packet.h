@@ -9,6 +9,7 @@
 #include <string.h>
 #include <malloc.h>
 #include "utils.h"
+#include <time.h>
 
 enum {
     COMPRESSION_FLAG = 0x0100,
@@ -20,16 +21,21 @@ enum {
 
 #include <stdint.h>
 
-static const char *HTTP_HEADER_STR = "HTTP/1.1 200 OK\r\nContent-Length: 148\r\n";
+#define HTTP_HEADER_TEMPLATE "HTTP/1.1 200 OK\r\nContent-Length: %d\r\n"
+#define MIN_CONTENT_LENGTH 100
+#define MAX_CONTENT_LENGTH 999
+
 
 struct Packet {
     uint32_t msgLength;
     uint32_t structSize;
     uint8_t flag;
-    uint8_t message[STREAM_BUF_SIZE];
+    uint8_t message[2048];
 };
 
 uint8_t *BufferEncode(struct Packet *pck, size_t bufSize, int *bytesWritten);
 int BufferDecode(uint8_t *buffer, size_t bufSize, struct Packet *pck);
+int FrameFromSocket (uint8_t *buf, size_t bufSize, int fd);
+int FrameToSocket (int sock, uint8_t *buf, size_t buf_len);
 
 #endif //XHTTP_PACKET_H

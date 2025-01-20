@@ -46,6 +46,7 @@ uint8_t *BufferEncode(struct Packet *pck, size_t bufSize, int *bytesWritten) {
 
 
     uint8_t *temporal_buffer = zlib_compress_dynamic(buffer, bufSize, (size_t *) &compressed_size);
+
     if (temporal_buffer != NULL) {
         printf("Hello!");
     }
@@ -55,6 +56,7 @@ uint8_t *BufferEncode(struct Packet *pck, size_t bufSize, int *bytesWritten) {
         aes_gcm_encrypt(temporal_buffer, compressed_size, newBuf);
         free(temporal_buffer);
         *bytesWritten = compressed_size;
+
         if (newBuf != NULL) {
             return newBuf;
         } else {
@@ -80,10 +82,12 @@ int BufferDecode(uint8_t *buffer, const size_t bufSize, struct Packet *pck) {
 
     aes_gcm_decrypt(buffer, bufSize, temporal_buffer);
     size_t outDecompressedSize = 0;
+
     buffer = zlib_decompress_dynamic(temporal_buffer, bufSize, &outDecompressedSize);
 
     if (outDecompressedSize == 0) {
         LogErrorWithReason("decompression", "ZLIB Decompression potential issues!");
+        return -1;
     }
 
     int offset = 0;
@@ -117,4 +121,103 @@ int BufferDecode(uint8_t *buffer, const size_t bufSize, struct Packet *pck) {
     free(buffer);
 
     return offset; // Return total bytes read
+}
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+int FrameToSocket(int sock, uint8_t *buf, size_t buf_len) {
+    if (sock < 0) {
+        return -1;
+    }
+
+    char http_header[45];
+    generate_http_header((char *) &http_header, 40);
+    // Allocate memory dynamically
+    size_t header_len = strlen(http_header);
+
+    size_t nBuf_size = buf_len + header_len;
+
+    if (nBuf_size > STREAM_BUF_SIZE + 40 || buf_len < 1) {
+        fprintf(stderr, "Buffer size too large|small\n");
+        return -1;
+    }
+
+    printf("%zu\n", nBuf_size);
+
+    uint8_t *nBuf = malloc(nBuf_size);
+    memset(nBuf, 0, nBuf_size);
+
+    if (!nBuf) {
+        perror("Memory allocation failed");
+        return -1;
+    }
+
+    size_t offset = 0;
+
+    // Copy header
+    strcpy((char *)nBuf + offset, http_header);
+    offset += header_len;
+
+    // Copy buffer data
+    memcpy(nBuf + offset, buf, buf_len);
+
+    // Write to socket
+    ssize_t bytes_written = write(sock, nBuf, nBuf_size);
+
+    free(nBuf);  // Free allocated memory
+
+    if (bytes_written >= 0) {
+        return bytes_written;
+    } else {
+        perror("Socket write failed");
+        return -1;
+    }
+}
+
+int FrameFromSocket(uint8_t *buf, size_t bufSize, int fd) {
+    if (fd < 0) {
+        return -1;
+    }
+
+    size_t header_len = 40;
+
+    if (bufSize < header_len) {
+        fprintf(stderr, "Buffer size too small for header\n");
+        return -1;
+    }
+
+    // Allocate memory dynamically
+
+    size_t tempBuf_size = bufSize + header_len;
+
+    if (tempBuf_size > STREAM_BUF_SIZE + 40) {
+        fprintf(stderr, "Buffer size too large\n");
+        return -1;
+    }
+
+    uint8_t *tempBuf = malloc(tempBuf_size);
+    memset(tempBuf, 0, tempBuf_size);
+
+    if (!tempBuf) {
+        perror("Memory allocation failed");
+        return -1;
+    }
+
+    // Read from socket
+    ssize_t bytes_read = read(fd, tempBuf, tempBuf_size);
+
+    if (bytes_read < 0) {
+        perror("Socket read failed");
+        free(tempBuf);
+        return -1;
+    }
+
+    // Skip the header and copy the rest
+    memcpy(buf, tempBuf + header_len, bufSize);
+
+    free(tempBuf);  // Free allocated memory
+
+    return bytes_read - header_len;
 }

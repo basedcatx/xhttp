@@ -1,3 +1,4 @@
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -5,19 +6,18 @@
 #include <signal.h>
 #include "../includes/utils.h"
 #include "../includes/logger.h"
-#include "../includes/packet.h"
 #include <errno.h>
 
-#define SERVER_PORT "8080"
-int localServerSock;
-int clientSock;
-FILE *in = NULL;
+#define LOCAL_SERVER_PORT "8090"
+#define REMOTE_HOST "127.0.0.1"
+#define REMOTE_PORT "8080"
+
+int localServerSock = -1;
+int clientSock = -1;
+int serverSock = -1;
 
 void cleanup() {
     puts("\nCleaning up held resources!\n");
-    if (in != NULL) {
-        fclose(in);
-    }
     if (localServerSock >= 0) {
         close(localServerSock);
     }
@@ -27,22 +27,19 @@ void cleanup() {
     exit(EXIT_FAILURE);
 }
 
-
 void cleanup_handler(int signo) {
     if (signo == SIGINT || signo == SIGTERM) {
         cleanup();
     }
 }
 
-
 int main(int argc, char *argv[]) {
+    localServerSock = CreateServerSocket(LOCAL_SERVER_PORT);
 
-    localServerSock = CreateServerSocket(SERVER_PORT);
-
-    signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE to avoid crashing on client disconnection
+    signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE to avoid crashes on client disconnection
 
     if (localServerSock < 0) {
-        LogSystemError("localserver socket()");
+        LogSystemError("Failed to create local server socket");
     }
 
     struct sigaction sa;
@@ -52,91 +49,95 @@ int main(int argc, char *argv[]) {
     sa.sa_flags = SA_RESTART;
 
     if (sigaction(SIGINT, &sa, NULL) < 0) {
-        perror("signal-action");
+        perror("sigaction");
         exit(EXIT_FAILURE);
     }
 
     if (sigaction(SIGTERM, &sa, NULL) < 0) {
-        perror("signal-action");
+        perror("sigaction");
         exit(EXIT_FAILURE);
     }
 
+    fd_set read_set;
+    uint8_t dataBuf[STREAM_BUF_SIZE], servBuf[STREAM_BUF_SIZE];
+    struct timeval interval = {10, 0}; // Timeout for select
 
     while (1) {
-        clientSock = AcceptTCPConnection(localServerSock);
 
         if (clientSock < 0) {
-            perror("AcceptTCPConnection");
-            continue; // Skip this iteration and wait for a new client
-        }
-
-        printf("New client connected...\n");
-
-        uint8_t dataBuffer[STREAM_BUF_SIZE];
-        struct timeval waitTime;
-        int isReady;
-
-        while (1) {
-            // Prepare the readWatcher set
-            fd_set readWatcher;
-            FD_ZERO(&readWatcher);
-            FD_SET(clientSock, &readWatcher);
-
-            // Set timeout for select
-            waitTime.tv_sec = 10;
-            waitTime.tv_usec = 0;
-
-            isReady = select(clientSock + 1, &readWatcher, NULL, NULL, &waitTime);
-
-            if (isReady > 0) {
-                if (FD_ISSET(clientSock, &readWatcher)) {
-                    memset(dataBuffer, '\0', sizeof(dataBuffer));
-                    ssize_t bytesRead = read(clientSock, dataBuffer, STREAM_BUF_SIZE - 1);
-
-                    if (bytesRead > 0) {
-                        // Process the data
-                        struct Packet requestPacket;
-                        memset(&requestPacket, 0, sizeof(requestPacket));
-                        dataBuffer[bytesRead] = '\0';
-                        requestPacket.msgLength = strlen((char *)dataBuffer);
-                        requestPacket.structSize = sizeof(struct Packet);
-                        strncpy((char *)requestPacket.message, (char *)dataBuffer, sizeof(requestPacket.message) - 1);
-
-                        // Encode the packet
-                        uint8_t *eBuffer = NULL;
-                        int bytesEncoded = -1;
-                        eBuffer = BufferEncode(&requestPacket, STREAM_BUF_SIZE, &bytesEncoded);
-
-                        if (bytesEncoded > 0) {
-                            printf("Encode complete: %d bytes encoded\n", bytesEncoded);
-                        } else {
-                            printf("Encoding failed\n");
-                        }
-
-                        free(eBuffer);
-                    } else if (bytesRead == 0) {
-                        // Client disconnected
-                        printf("Client disconnected. Waiting for new connections...\n");
-                        close(clientSock);
-                        break; // Exit the inner loop and wait for a new client
-                    } else {
-                        // Read error
-                        perror("read");
-                        break;
-                    }
-                }
-            } else if (isReady == 0) {
-                // Timeout
-                printf("No data received within the timeout period.\n");
-            } else {
-                // Error in select
-                perror("select");
-                close(clientSock);
-                break;
+            clientSock = AcceptTCPConnection(localServerSock);
+            set_nonblocking_socket(clientSock);
+            if (clientSock < 0 && errno != EINTR) {
+                perror("Accept failed");
+                continue;
             }
+            printf("Client connected.\n");
         }
+
+        if (serverSock < 0) {
+            serverSock = CreateClientSocket(REMOTE_HOST, REMOTE_PORT);
+            set_nonblocking_socket(serverSock);
+            if (serverSock < 0) {
+                perror("Failed to connect to server. Retrying...");
+                sleep(1);
+                continue;
+            }
+            printf("Connected to server.\n");
+        }
+
+        FD_ZERO(&read_set);
+        FD_SET(clientSock, &read_set);
+        FD_SET(serverSock, &read_set);
+
+        int max_fd = (clientSock > serverSock ? clientSock : serverSock) + 1;
+        int activity = select(max_fd, &read_set, NULL, NULL, &interval);
+
+        if (activity > 0) {
+
+            if (FD_ISSET(clientSock, &read_set)) {
+                //ssize_t bytes = read(clientSock, dataBuf, STREAM_BUF_SIZE - 1);
+                ssize_t bytes = FrameFromSocket(dataBuf, STREAM_BUF_SIZE, clientSock);
+
+                if (bytes > 0) {
+                    printf("Received from client: %.*s\n", (int)bytes, dataBuf);
+                    //size_t writeBytes = write(serverSock, dataBuf, bytes);
+                    size_t writeBytes = FrameToSocket(serverSock, dataBuf, sizeof(dataBuf));
+                    if (writeBytes > 0) {
+                        printf("Successfully wrote %zu bytes to server", writeBytes);
+                    } else {
+                        printf("Unknown error!");
+                    }
+
+                } else {
+                    printf("Client disconnected.\n");
+                    close(clientSock);
+                    clientSock = -1;
+                }
+            }
+
+            if (FD_ISSET(serverSock, &read_set)) {
+//                ssize_t bytes = read(serverSock, servBuf, STREAM_BUF_SIZE - 1);
+                ssize_t bytes = FrameFromSocket(servBuf, STREAM_BUF_SIZE, serverSock);
+                if (bytes > 0) {
+                    printf("Received from server: %.*s\n", (int)bytes, servBuf);
+                    FrameToSocket(clientSock, servBuf, sizeof(servBuf));
+                } else {
+                    printf("Server disconnected.\n");
+                }
+                close(serverSock);
+                serverSock = -1;
+                printf("Server reconnected!");
+                continue;
+            }
+        } else if (activity == 0) {
+            continue;
+        } else if (errno != EINTR) {
+            perror("Select error");
+            break;
+        }
+
     }
 
+    cleanup();
+    return 0;
 }
-
-

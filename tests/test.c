@@ -31,11 +31,6 @@ int main (int argc, char *argv[]) {
 
     printf("encode packet:: %d.\n", bufEnc);
 
-    for (int i = 0; i < bufEnc; i++) {
-        printf("%c", buffer[i]);
-    }
-
-
 
      // Decode the packet
     struct Packet decodedPacket;

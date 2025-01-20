@@ -8,7 +8,6 @@
 #include <stdio.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <errno.h>
 #include <unistd.h>
 #include "../includes/utils.h"
 #define MAX_CONNECTED_SOCKS 10
@@ -69,8 +68,7 @@ int AcceptTCPConnection(int serveSocks) {
     setsockopt(serveSocks, SOL_SOCKET, SO_REUSEPORT, &tBuf, sizeof(tBuf));
 
     while (1) {
-        struct timeval timeout = {5, 0};
-        int ready = select(serveSocks + 1, &sock_fd_set, NULL, NULL, &timeout);
+        int ready = select(serveSocks + 1, &sock_fd_set, NULL, NULL, NULL);
 
         if (ready == -1) {
             LogSystemError("select() failed!");
