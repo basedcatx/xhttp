@@ -22,7 +22,6 @@ add_executable(xhttp_c
         Encoder/Encoder.c
         includes/packet.h
         crypt/AES.c
-        utils/Utils.c
         utils/AddressUtility.c
         )
 
@@ -37,7 +36,7 @@ add_executable(test_c
         utils/Compressor.c
         Encoder/Encoder.c
         includes/packet.h
-        crypt/AES.c utils/Utils.c utils/AddressUtility.c
+        crypt/AES.c utils/AddressUtility.c
         )
 
 add_executable(xhttp_s
@@ -51,7 +50,7 @@ add_executable(xhttp_s
         utils/Compressor.c
         Encoder/Encoder.c
         includes/packet.h
-        crypt/AES.c crypt/AES.c utils/Utils.c utils/Utils.c utils/AddressUtility.c)
+        crypt/AES.c crypt/AES.c utils/AddressUtility.c)
 
 target_link_libraries(test_c PRIVATE ZLIB::ZLIB)
 target_link_libraries(xhttp_c PRIVATE ZLIB::ZLIB)

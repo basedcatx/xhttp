@@ -63,68 +63,79 @@ int main(int argc, char *argv[]) {
 
 
     while (1) {
-
         clientSock = AcceptTCPConnection(localServerSock);
 
         if (clientSock < 0) {
-            perror("client_socks()");
+            perror("AcceptTCPConnection");
+            continue; // Skip this iteration and wait for a new client
         }
 
-        fd_set readWatcher;
-        FD_ZERO(&readWatcher);
-        FD_SET(clientSock, &readWatcher);
-        struct timeval waitTime = {5, 0};
+        printf("New client connected...\n");
+
         uint8_t dataBuffer[STREAM_BUF_SIZE];
+        struct timeval waitTime;
+        int isReady;
 
-        int isReady = select(clientSock + 1, &readWatcher, NULL, NULL, &waitTime);
+        while (1) {
+            // Prepare the readWatcher set
+            fd_set readWatcher;
+            FD_ZERO(&readWatcher);
+            FD_SET(clientSock, &readWatcher);
 
-        if (isReady > 0) {
-            while (1) {
+            // Set timeout for select
+            waitTime.tv_sec = 10;
+            waitTime.tv_usec = 0;
+
+            isReady = select(clientSock + 1, &readWatcher, NULL, NULL, &waitTime);
+
+            if (isReady > 0) {
                 if (FD_ISSET(clientSock, &readWatcher)) {
-                    memset(&dataBuffer, '\0', sizeof(dataBuffer));
-                    size_t bytesRead = read(clientSock, dataBuffer, STREAM_BUF_SIZE - 1);
+                    memset(dataBuffer, '\0', sizeof(dataBuffer));
+                    ssize_t bytesRead = read(clientSock, dataBuffer, STREAM_BUF_SIZE - 1);
 
-                    if (bytesRead > 0 ) {
+                    if (bytesRead > 0) {
+                        // Process the data
                         struct Packet requestPacket;
                         memset(&requestPacket, 0, sizeof(requestPacket));
                         dataBuffer[bytesRead] = '\0';
-                        requestPacket.msgLength = strlen((char *) dataBuffer);
+                        requestPacket.msgLength = strlen((char *)dataBuffer);
                         requestPacket.structSize = sizeof(struct Packet);
-                        strncpy((char *) requestPacket.message, (char *) dataBuffer, sizeof(requestPacket.message) - 1);
-                        requestPacket.message[sizeof(requestPacket.message) - 1] = '\0';
-                        uint8_t *eBuffer = NULL;
+                        strncpy((char *)requestPacket.message, (char *)dataBuffer, sizeof(requestPacket.message) - 1);
 
+                        // Encode the packet
+                        uint8_t *eBuffer = NULL;
                         int bytesEncoded = -1;
-                        eBuffer = BufferEncode(&requestPacket,STREAM_BUF_SIZE, &bytesEncoded);
+                        eBuffer = BufferEncode(&requestPacket, STREAM_BUF_SIZE, &bytesEncoded);
 
                         if (bytesEncoded > 0) {
-                            printf("Encode complete!\n");
+                            printf("Encode complete: %d bytes encoded\n", bytesEncoded);
                         } else {
-                            printf("Failed to encode");
+                            printf("Encoding failed\n");
                         }
-
-                        if (eBuffer == NULL) {
-                            printf("eBuffer is null");
-                        }
-
 
                         free(eBuffer);
-
                     } else if (bytesRead == 0) {
+                        // Client disconnected
+                        printf("Client disconnected. Waiting for new connections...\n");
                         close(clientSock);
-                        printf("Well, client disconnected! awaiting new connections... \n");
-                        break;
+                        break; // Exit the inner loop and wait for a new client
                     } else {
-                        perror("stream");
+                        // Read error
+                        perror("read");
+                        break;
                     }
                 }
-
+            } else if (isReady == 0) {
+                // Timeout
+                printf("No data received within the timeout period.\n");
+            } else {
+                // Error in select
+                perror("select");
+                close(clientSock);
+                break;
             }
-
         }
-
     }
-
 
 }
 

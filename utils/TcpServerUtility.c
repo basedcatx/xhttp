@@ -8,8 +8,10 @@
 #include <stdio.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <errno.h>
 #include <unistd.h>
 #include "../includes/utils.h"
+#define MAX_CONNECTED_SOCKS 10
 
 int CreateServerSocket(const char *service) {
     struct addrinfo addrCriteria;
@@ -36,7 +38,7 @@ int CreateServerSocket(const char *service) {
             continue;
         }
 
-        if (bind(serverSock, servAddr->ai_addr, servAddr->ai_addrlen) == 0 && (listen(serverSock, 10) == 0)) {
+        if (bind(serverSock, servAddr->ai_addr, servAddr->ai_addrlen) == 0 && (listen(serverSock, MAX_CONNECTED_SOCKS) == 0)) {
             struct sockaddr_storage localAddr;
             socklen_t addrSize = sizeof(localAddr);
 

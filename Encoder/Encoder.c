@@ -118,19 +118,3 @@ int BufferDecode(uint8_t *buffer, const size_t bufSize, struct Packet *pck) {
 
     return offset; // Return total bytes read
 }
-
-void FrameToSocket(uint8_t *buf, size_t bufSize, FILE *in) {
-    if (fwrite(HTTP_HEADER_STR, sizeof (uint8_t), strlen(HTTP_HEADER_STR), in) < strlen(HTTP_HEADER_STR)) {
-        LogErrorWithReason("io", "Failed to send header!");
-    }
-
-    fwrite(buf, sizeof(uint8_t), bufSize, in);
-}
-
-
-void FrameFromSocket(uint8_t *outBuf, size_t bufSize, FILE *in) {
-    if (fread(NULL, sizeof(uint8_t), strlen(HTTP_HEADER_STR), in) < strlen(HTTP_HEADER_STR)) {
-        LogErrorWithReason("io", "Failed to read header!");
-    }
-    fread(outBuf, sizeof (uint8_t), bufSize, in);
-}
