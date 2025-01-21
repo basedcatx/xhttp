@@ -141,11 +141,12 @@ void *handle_client_thread(void *args) {
 
         // Handle data from client to proxy
         if (FD_ISSET(socks, &read_fd_set)) {
-            size_t client_bytes = FrameFromSocket(client_buf, sizeof(client_buf), socks);
+            size_t client_bytes = read(socks, client_buf, sizeof(client_buf));
+            //size_t client_bytes = FrameFromSocket(client_buf, sizeof(client_buf), socks);
             if (client_bytes > 0) {
 
-                //ssize_t proxy_sent = write(proxySocket, client_buf, client_bytes);
-                ssize_t proxy_sent = FrameToSocket(proxySocket, client_buf, sizeof(client_buf));
+                ssize_t proxy_sent = write(proxySocket, client_buf, client_bytes);
+                //ssize_t proxy_sent = FrameToSocket(proxySocket, client_buf, sizeof(client_buf));
                 if (proxy_sent < 0 && errno != EAGAIN) {
                     perror("Error writing to proxy");
                     break;
@@ -162,11 +163,11 @@ void *handle_client_thread(void *args) {
 
         // Handle data from proxy to client
         if (FD_ISSET(proxySocket, &read_fd_set)) {
-            // ssize_t proxy_bytes = read(proxySocket, proxy_buf, sizeof(proxy_buf));
-            ssize_t proxy_bytes = FrameFromSocket(proxy_buf, sizeof(proxy_buf), proxySocket);
+             ssize_t proxy_bytes = read(proxySocket, proxy_buf, sizeof(proxy_buf));
+           // ssize_t proxy_bytes = FrameFromSocket(proxy_buf, sizeof(proxy_buf), proxySocket);
             if (proxy_bytes > 0) {
-                //ssize_t client_sent = write(socks, proxy_buf, proxy_bytes);
-                ssize_t client_sent = FrameToSocket(socks, proxy_buf, sizeof(proxy_buf));
+                ssize_t client_sent = write(socks, proxy_buf, proxy_bytes);
+                //ssize_t client_sent = FrameToSocket(socks, proxy_buf, sizeof(proxy_buf));
                 if (client_sent < 0 && errno != EAGAIN) {
                     perror("Error writing to client");
                     break;

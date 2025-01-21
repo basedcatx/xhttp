@@ -9,7 +9,7 @@
 #include <errno.h>
 
 #define LOCAL_SERVER_PORT "8090"
-#define REMOTE_HOST "127.0.0.1"
+#define REMOTE_HOST "167.71.189.187"
 #define REMOTE_PORT "8080"
 
 int localServerSock = -1;
@@ -95,13 +95,13 @@ int main(int argc, char *argv[]) {
         if (activity > 0) {
 
             if (FD_ISSET(clientSock, &read_set)) {
-                //ssize_t bytes = read(clientSock, dataBuf, STREAM_BUF_SIZE - 1);
-                ssize_t bytes = FrameFromSocket(dataBuf, STREAM_BUF_SIZE, clientSock);
+                ssize_t bytes = read(clientSock, dataBuf, STREAM_BUF_SIZE - 1);
+                //ssize_t bytes = FrameFromSocket(dataBuf, STREAM_BUF_SIZE, clientSock);
 
                 if (bytes > 0) {
                     printf("Received from client: %.*s\n", (int)bytes, dataBuf);
-                    //size_t writeBytes = write(serverSock, dataBuf, bytes);
-                    size_t writeBytes = FrameToSocket(serverSock, dataBuf, sizeof(dataBuf));
+                    size_t writeBytes = write(serverSock, dataBuf, bytes);
+                    //size_t writeBytes = FrameToSocket(serverSock, dataBuf, sizeof(dataBuf));
                     if (writeBytes > 0) {
                         printf("Successfully wrote %zu bytes to server", writeBytes);
                     } else {
@@ -116,11 +116,12 @@ int main(int argc, char *argv[]) {
             }
 
             if (FD_ISSET(serverSock, &read_set)) {
-//                ssize_t bytes = read(serverSock, servBuf, STREAM_BUF_SIZE - 1);
-                ssize_t bytes = FrameFromSocket(servBuf, STREAM_BUF_SIZE, serverSock);
+                ssize_t bytes = read(serverSock, servBuf, STREAM_BUF_SIZE - 1);
+                //ssize_t bytes = FrameFromSocket(servBuf, STREAM_BUF_SIZE, serverSock);
                 if (bytes > 0) {
                     printf("Received from server: %.*s\n", (int)bytes, servBuf);
-                    FrameToSocket(clientSock, servBuf, sizeof(servBuf));
+                    //FrameToSocket(clientSock, servBuf, sizeof(servBuf));
+                    write(clientSock, servBuf, sizeof(servBuf));
                 } else {
                     printf("Server disconnected.\n");
                 }
