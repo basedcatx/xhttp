@@ -7,8 +7,10 @@
 #include "../includes/logger.h"
 #include <string.h>
 #include <malloc.h>
-#include "../includes/utils.h"
 #include "../includes/crypt.h"
+#define HEADER_SIZE 40
+#define LOG(fmt, ...) fprintf(stderr, "[LOG] " fmt "\n", ##__VA_ARGS__)
+#include "errno.h"
 
 uint8_t *BufferEncode(struct Packet *pck, size_t bufSize, int *bytesWritten) {
 
@@ -47,9 +49,6 @@ uint8_t *BufferEncode(struct Packet *pck, size_t bufSize, int *bytesWritten) {
 
     uint8_t *temporal_buffer = zlib_compress_dynamic(buffer, bufSize, (size_t *) &compressed_size);
 
-    if (temporal_buffer != NULL) {
-        printf("Hello!");
-    }
 
     if (compressed_size > 0 && temporal_buffer != NULL) {
         uint8_t *newBuf = realloc(buffer, compressed_size);
@@ -123,101 +122,124 @@ int BufferDecode(uint8_t *buffer, const size_t bufSize, struct Packet *pck) {
     return offset; // Return total bytes read
 }
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-
-int FrameToSocket(int sock, uint8_t *buf, size_t buf_len) {
-    if (sock < 0) {
+ssize_t FrameToSocket(int sock, const char *header, const void *data, size_t data_size) {
+    size_t total_size = HEADER_SIZE + data_size;
+    char *buffer = malloc(total_size);
+    if (!buffer) {
+        perror("Malloc failed for FrameToSocket");
         return -1;
     }
 
-    char http_header[45];
-    generate_http_header((char *) &http_header, 40);
-    // Allocate memory dynamically
-    size_t header_len = strlen(http_header);
+    // Prepend the header
+    memcpy(buffer, header, HEADER_SIZE);
+    memcpy(buffer + HEADER_SIZE, data, data_size);
 
-    size_t nBuf_size = buf_len + header_len;
+    ssize_t offset = 0;
+    while (offset < total_size) {
+        ssize_t bytes_written = write(sock, buffer + offset, total_size - offset);
+        if (bytes_written <= 0) {
+            perror("Socket write failed");
+            free(buffer);
+            return -1;
+        }
+        LOG("Sent %zd bytes (offset: %zu)", bytes_written, offset);
+        offset += bytes_written;
 
-    if (nBuf_size > STREAM_BUF_SIZE + 40 || buf_len < 1) {
-        fprintf(stderr, "Buffer size too large|small\n");
-        return -1;
+        // If partial write, prepend the header again
+        if (offset < total_size) {
+            LOG("Partial write detected. Re-prepending header for remaining data.");
+            size_t remaining_size = total_size - offset;
+            char *temp_buffer = malloc(HEADER_SIZE + remaining_size);
+            if (!temp_buffer) {
+                perror("Malloc failed for partial write");
+                free(buffer);
+                return -1;
+            }
+            memcpy(temp_buffer, header, HEADER_SIZE);
+            memcpy(temp_buffer + HEADER_SIZE, buffer + offset, remaining_size);
+            free(buffer);
+            buffer = temp_buffer;
+            total_size = HEADER_SIZE + remaining_size;
+            offset = 0;
+        }
     }
 
-    printf("%zu\n", nBuf_size);
-
-    uint8_t *nBuf = malloc(nBuf_size);
-    memset(nBuf, 0, nBuf_size);
-
-    if (!nBuf) {
-        perror("Memory allocation failed");
-        return -1;
-    }
-
-    size_t offset = 0;
-
-    // Copy header
-    strcpy((char *)nBuf + offset, http_header);
-    offset += header_len;
-
-    // Copy buffer data
-    memcpy(nBuf + offset, buf, buf_len);
-
-    // Write to socket
-    ssize_t bytes_written = write(sock, nBuf, nBuf_size);
-
-    free(nBuf);  // Free allocated memory
-
-    if (bytes_written >= 0) {
-        return bytes_written;
-    } else {
-        perror("Socket write failed");
-        return -1;
-    }
+    free(buffer);
+    LOG("FrameToSocket completed successfully.");
+    return offset;
 }
 
-int FrameFromSocket(uint8_t *buf, size_t bufSize, int fd) {
-    if (fd < 0) {
+ssize_t FrameFromSocket(int sock, const char *header, void *data, size_t data_size) {
+    if (sock < 0 || !header || !data) {
+        fprintf(stderr, "Invalid input arguments\n");
         return -1;
     }
 
-    size_t header_len = 40;
-
-    if (bufSize < header_len) {
-        fprintf(stderr, "Buffer size too small for header\n");
+    char *buffer = malloc(HEADER_SIZE + data_size);
+    if (!buffer) {
+        perror("Failed to allocate memory for buffer");
         return -1;
     }
 
-    // Allocate memory dynamically
-
-    size_t tempBuf_size = bufSize + header_len;
-
-    if (tempBuf_size > STREAM_BUF_SIZE + 40) {
-        fprintf(stderr, "Buffer size too large\n");
+    char *output = malloc(data_size);
+    if (!output) {
+        perror("Failed to allocate memory for output buffer");
+        free(buffer);
         return -1;
     }
 
-    uint8_t *tempBuf = malloc(tempBuf_size);
-    memset(tempBuf, 0, tempBuf_size);
+    size_t offset = 0, output_offset = 0;
 
-    if (!tempBuf) {
-        perror("Memory allocation failed");
-        return -1;
+    ssize_t total_bytes_read = 0;
+
+
+    while (total_bytes_read < data_size) {
+
+        ssize_t bytes_read = read(sock, buffer + offset, HEADER_SIZE + data_size - offset);
+
+        if (bytes_read < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                continue; // No data available, try again
+            } else {
+                perror("Socket read failed");
+                free(buffer);
+                free(output);
+                return -1;
+            }
+        }
+
+        offset += bytes_read;
+        total_bytes_read += bytes_read;
+        LOG("Read %zd bytes (offset: %zu)", bytes_read, offset);
+
+        size_t i = 0;
+        while (i + HEADER_SIZE <= offset) {  // Ensure we don't overflow during memcmp
+            if (memcmp(buffer + i, header, HEADER_SIZE) == 0) {
+                LOG("Header detected at offset %zu. Skipping %d bytes.", i, HEADER_SIZE);
+                i += HEADER_SIZE;
+            } else {
+                if (output_offset < data_size) {
+                    output[output_offset++] = buffer[i++];
+                    total_bytes_read++;
+                } else {
+                    i++;
+                }
+            }
+            printf("Iterating\n");
+        }
+
+
+        size_t unprocessed_bytes = offset - i;
+        memmove(buffer, buffer + i, unprocessed_bytes);  // Move unprocessed data to the start
+        offset = unprocessed_bytes;
     }
 
-    // Read from socket
-    ssize_t bytes_read = read(fd, tempBuf, tempBuf_size);
+    memcpy(data, output, data_size);
+    free(buffer);
+    free(output);
 
-    if (bytes_read < 0) {
-        perror("Socket read failed");
-        free(tempBuf);
-        return -1;
-    }
-
-    // Skip the header and copy the rest
-    memcpy(buf, tempBuf + header_len, bufSize);
-
-    free(tempBuf);  // Free allocated memory
-
-    return bytes_read - header_len;
+    LOG("FrameFromSocket completed successfully. Total payload read: %zd bytes.", total_bytes_read);
+    return total_bytes_read;
 }
+
+

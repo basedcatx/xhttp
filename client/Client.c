@@ -1,45 +1,34 @@
-
+#include "../includes/utils.h"
+#include "../includes/logger.h"
+#include <signal.h>
+#include <sys/select.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <signal.h>
-#include "../includes/utils.h"
-#include "../includes/logger.h"
 #include <errno.h>
+#include <pthread.h>
 
-#define LOCAL_SERVER_PORT "8090"
-#define REMOTE_HOST "167.71.189.187"
-#define REMOTE_PORT "8080"
+#define DEF_LOCAL_PORT "8090"
+#define PROXY_HOST "localhost"
+#define PROXY_PORT "8080"
 
-int localServerSock = -1;
-int clientSock = -1;
 int serverSock = -1;
+int proxySocks = -1;
 
-void cleanup() {
-    puts("\nCleaning up held resources!\n");
-    if (localServerSock >= 0) {
-        close(localServerSock);
-    }
-    if (clientSock >= 0) {
-        close(clientSock);
-    }
-    exit(EXIT_FAILURE);
-}
+void cleanup();
+void cleanup_handler(int signo);
+void *handle_client_thread(void *args);
 
-void cleanup_handler(int signo) {
-    if (signo == SIGINT || signo == SIGTERM) {
-        cleanup();
-    }
-}
 
 int main(int argc, char *argv[]) {
-    localServerSock = CreateServerSocket(LOCAL_SERVER_PORT);
+    signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE to avoid crashing on client disconnection
 
-    signal(SIGPIPE, SIG_IGN); // Ignore SIGPIPE to avoid crashes on client disconnection
+    serverSock = CreateServerSocket(DEF_LOCAL_PORT);
 
-    if (localServerSock < 0) {
-        LogSystemError("Failed to create local server socket");
+    if (serverSock < 0) {
+        LogSystemError("serverSocks()");
+        exit(EXIT_FAILURE);
     }
 
     struct sigaction sa;
@@ -48,93 +37,53 @@ int main(int argc, char *argv[]) {
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = SA_RESTART;
 
-    if (sigaction(SIGINT, &sa, NULL) < 0) {
+    if (sigaction(SIGINT, &sa, NULL) < 0 || sigaction(SIGTERM, &sa, NULL) < 0) {
         perror("sigaction");
         exit(EXIT_FAILURE);
     }
 
-    if (sigaction(SIGTERM, &sa, NULL) < 0) {
-        perror("sigaction");
-        exit(EXIT_FAILURE);
-    }
-
-    fd_set read_set;
-    uint8_t dataBuf[STREAM_BUF_SIZE], servBuf[STREAM_BUF_SIZE];
-    struct timeval interval = {10, 0}; // Timeout for select
+    fd_set read_fds;
 
     while (1) {
 
-        if (clientSock < 0) {
-            clientSock = AcceptTCPConnection(localServerSock);
-            set_nonblocking_socket(clientSock);
-            if (clientSock < 0 && errno != EINTR) {
-                perror("Accept failed");
-                continue;
-            }
-            printf("Client connected.\n");
-        }
+        FD_ZERO(&read_fds);
+        FD_SET(serverSock, &read_fds);
 
-        if (serverSock < 0) {
-            serverSock = CreateClientSocket(REMOTE_HOST, REMOTE_PORT);
-            set_nonblocking_socket(serverSock);
-            if (serverSock < 0) {
-                perror("Failed to connect to server. Retrying...");
-                sleep(1);
-                continue;
-            }
-            printf("Connected to server.\n");
-        }
+        int activity = select(serverSock + 1, &read_fds, NULL, NULL, NULL);
 
-        FD_ZERO(&read_set);
-        FD_SET(clientSock, &read_set);
-        FD_SET(serverSock, &read_set);
-
-        int max_fd = (clientSock > serverSock ? clientSock : serverSock) + 1;
-        int activity = select(max_fd, &read_set, NULL, NULL, &interval);
-
-        if (activity > 0) {
-
-            if (FD_ISSET(clientSock, &read_set)) {
-                ssize_t bytes = read(clientSock, dataBuf, STREAM_BUF_SIZE - 1);
-                //ssize_t bytes = FrameFromSocket(dataBuf, STREAM_BUF_SIZE, clientSock);
-
-                if (bytes > 0) {
-                    printf("Received from client: %.*s\n", (int)bytes, dataBuf);
-                    size_t writeBytes = write(serverSock, dataBuf, bytes);
-                    //size_t writeBytes = FrameToSocket(serverSock, dataBuf, sizeof(dataBuf));
-                    if (writeBytes > 0) {
-                        printf("Successfully wrote %zu bytes to server", writeBytes);
-                    } else {
-                        printf("Unknown error!");
-                    }
-
-                } else {
-                    printf("Client disconnected.\n");
-                    close(clientSock);
-                    clientSock = -1;
-                }
-            }
-
-            if (FD_ISSET(serverSock, &read_set)) {
-                ssize_t bytes = read(serverSock, servBuf, STREAM_BUF_SIZE - 1);
-                //ssize_t bytes = FrameFromSocket(servBuf, STREAM_BUF_SIZE, serverSock);
-                if (bytes > 0) {
-                    printf("Received from server: %.*s\n", (int)bytes, servBuf);
-                    //FrameToSocket(clientSock, servBuf, sizeof(servBuf));
-                    write(clientSock, servBuf, sizeof(servBuf));
-                } else {
-                    printf("Server disconnected.\n");
-                }
-                close(serverSock);
-                serverSock = -1;
-                printf("Server reconnected!");
-                continue;
-            }
-        } else if (activity == 0) {
-            continue;
-        } else if (errno != EINTR) {
-            perror("Select error");
+        if (activity < 0 && errno != EINTR) {
+            perror("select");
             break;
+        }
+
+        if (FD_ISSET(serverSock, &read_fds)) {
+
+            int clientSock = AcceptTCPConnection(serverSock);
+
+            if (clientSock < 0) {
+                perror("AcceptTCPConnection");
+                continue;
+            }
+
+            int *clientSockPtr = malloc(sizeof(int));
+
+            if (!clientSockPtr) {
+                perror("malloc");
+                close(clientSock);
+                continue;
+            }
+
+            *clientSockPtr = clientSock;
+
+            pthread_t clientThread;
+            if (pthread_create(&clientThread, NULL, handle_client_thread, clientSockPtr) == 0) {
+                pthread_detach(clientThread);
+                printf("Detached!\n\n");
+            } else {
+                perror("pthread_create");
+                close(clientSock);
+                free(clientSockPtr);
+            }
         }
 
     }
@@ -142,3 +91,149 @@ int main(int argc, char *argv[]) {
     cleanup();
     return 0;
 }
+
+
+
+void *handle_client_thread(void *args) {
+
+    int socks = *(int *)args; // Client socket
+    free(args);
+
+    int proxySocket = CreateClientSocket(PROXY_HOST, PROXY_PORT);
+
+    if (proxySocket < 0) {
+        perror("Failed to connect to proxy");
+        close(socks);
+        return NULL;
+    }
+
+    char header[40];
+    generate_http_header((char *) &header, 40);
+
+    // Set both sockets to non-blocking mode
+    set_nonblocking_socket(socks);
+    set_nonblocking_socket(proxySocket);
+
+    printf("New client connected: %d\n", socks);
+
+    uint8_t client_buf[STREAM_BUF_SIZE];
+    uint8_t proxy_buf[STREAM_BUF_SIZE];
+
+    while (1) {
+
+        fd_set read_fd_set, write_fd_set;
+        FD_ZERO(&read_fd_set);
+        FD_ZERO(&write_fd_set);
+
+        FD_SET(socks, &read_fd_set);
+        FD_SET(proxySocket, &read_fd_set);
+
+        int max_fd = (socks > proxySocket ? socks : proxySocket) + 1;
+
+        struct timeval timeout = {5, 0}; // 5-second timeout for select
+        int activity = select(max_fd, &read_fd_set, &write_fd_set, NULL, &timeout);
+
+        if (activity < 0 && errno != EINTR) {
+            perror("select");
+            break;
+        }
+
+        if (activity == 0) {
+            // Timeout
+            continue;
+        }
+
+        // Handle data from client to proxy (local socks -> server)
+
+        if (FD_ISSET(socks, &read_fd_set)) {
+            struct Packet pck;
+            memset(&pck, 0, sizeof(pck));
+
+            ssize_t client_bytes = read(socks, client_buf, sizeof(client_buf));
+
+            if (client_bytes > 0) {
+                pck.msgLength = client_bytes;
+                memcpy(&pck.message, client_buf, client_bytes);
+                pck.flag |= IS_REQUEST_FLAG;
+                int bytes_to_send_written = 0;
+                uint8_t *bytes_to_send = BufferEncode(&pck, sizeof(pck), &bytes_to_send_written);
+
+                if (bytes_to_send_written > 0) {
+                    ssize_t proxy_sent = FrameToSocket(proxySocket, (char *) &header, bytes_to_send, STREAM_BUF_SIZE);
+
+                    if (proxy_sent < 0 && errno != EAGAIN) {
+                        perror("Error writing to proxy");
+                        break;
+                    }
+
+                    printf("Sent %zu bytes to proxy\n", proxy_sent);
+                }
+
+                free(bytes_to_send);
+
+            } else if (client_bytes == 0) {
+                printf("Client disconnected.\n");
+                break;
+            } else if (errno != EAGAIN) {
+                perror("Error reading from client");
+                break;
+            }
+        }
+
+        // Handle data from proxy to client
+        if (FD_ISSET(proxySocket, &read_fd_set)) {
+            struct Packet pck;
+            memset(&pck, 0, sizeof(pck));
+
+            ssize_t proxy_bytes = read(proxySocket, proxy_buf, sizeof(proxy_buf));
+
+            if (BufferDecode(proxy_buf, sizeof(proxy_buf), &pck) < 0) {
+                LogErrorWithReason("[LOG]", "Failed to decode data from proxy!");
+                break;
+            }
+
+            if (proxy_bytes > 0) {
+                ssize_t client_sent = write(socks, pck.message, sizeof(pck.message));
+
+                if (client_sent < 0 && errno != EAGAIN) {
+                    perror("Error writing to client");
+                    break;
+                }
+
+                printf("Sent %zu bytes to client\n", client_sent);
+            } else if (proxy_bytes == 0) {
+                printf("Proxy disconnected.\n");
+                break;
+            } else if (errno != EAGAIN) {
+                perror("Error reading from proxy");
+                break;
+            }
+        }
+    }
+
+    close(socks);
+    close(proxySocket);
+    printf("Thread exiting for client %d.\n", socks);
+    return NULL;
+}
+
+
+
+void cleanup_handler(int signo) {
+    if (signo == SIGINT || signo == SIGTERM) {
+        cleanup();
+    }
+}
+
+
+void cleanup() {
+    puts("\nCleaning up held resources!\n");
+    if (serverSock >= 0) {
+        close(serverSock);
+    }
+    if (proxySocks >= 0) {
+        close(proxySocks);
+    }
+    exit(EXIT_FAILURE);
+}
+

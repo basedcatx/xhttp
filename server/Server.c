@@ -80,7 +80,7 @@ int main(int argc, char *argv[]) {
             pthread_t clientThread;
             if (pthread_create(&clientThread, NULL, handle_client_thread, clientSockPtr) == 0) {
                 pthread_detach(clientThread);
-                printf("Detached!");
+                printf("Detached!\n\n");
             } else {
                 perror("pthread_create");
                 close(clientSock);
@@ -106,6 +106,9 @@ void *handle_client_thread(void *args) {
         close(socks);
         return NULL;
     }
+
+    char header[40];
+    generate_http_header((char *) &header, 40);
 
     // Set both sockets to non-blocking mode
     set_nonblocking_socket(socks);
@@ -139,18 +142,29 @@ void *handle_client_thread(void *args) {
             continue;
         }
 
-        // Handle data from client to proxy
+        // Handle data from client to proxy (remote_client -> server)
+
         if (FD_ISSET(socks, &read_fd_set)) {
-            size_t client_bytes = read(socks, client_buf, sizeof(client_buf));
-            //size_t client_bytes = FrameFromSocket(client_buf, sizeof(client_buf), socks);
+            struct Packet pck;
+            memset(&pck, 0, sizeof(pck));
+
+            ssize_t client_bytes = FrameFromSocket(socks, (const char *) &header, client_buf, sizeof(client_buf));
+
+
+            if (BufferDecode(client_buf, sizeof(client_buf), &pck) < 0) {
+                LogErrorWithReason("[LOG]", "Failed to decode data from client!");
+                continue;
+            }
+
             if (client_bytes > 0) {
 
-                ssize_t proxy_sent = write(proxySocket, client_buf, client_bytes);
-                //ssize_t proxy_sent = FrameToSocket(proxySocket, client_buf, sizeof(client_buf));
+                ssize_t proxy_sent = write(proxySocket, pck.message, sizeof(pck.message));
+
                 if (proxy_sent < 0 && errno != EAGAIN) {
                     perror("Error writing to proxy");
                     break;
                 }
+
                 printf("Sent %zu bytes to proxy\n", proxy_sent);
             } else if (client_bytes == 0) {
                 printf("Client disconnected.\n");
@@ -163,16 +177,30 @@ void *handle_client_thread(void *args) {
 
         // Handle data from proxy to client
         if (FD_ISSET(proxySocket, &read_fd_set)) {
-             ssize_t proxy_bytes = read(proxySocket, proxy_buf, sizeof(proxy_buf));
-           // ssize_t proxy_bytes = FrameFromSocket(proxy_buf, sizeof(proxy_buf), proxySocket);
+            struct Packet pck;
+            memset(&pck, 0, sizeof(pck));
+            pck.flag |= IS_RESPONSE_FLAG;
+
+            ssize_t proxy_bytes = read(proxySocket, proxy_buf, sizeof(proxy_buf));
+
             if (proxy_bytes > 0) {
-                ssize_t client_sent = write(socks, proxy_buf, proxy_bytes);
-                //ssize_t client_sent = FrameToSocket(socks, proxy_buf, sizeof(proxy_buf));
-                if (client_sent < 0 && errno != EAGAIN) {
-                    perror("Error writing to client");
-                    break;
+
+                memcpy(pck.message, proxy_buf, sizeof(pck.message));
+                int bytes_encoded = 0;
+                uint8_t *bytes_to_write = BufferEncode(&pck, sizeof(proxy_buf), &bytes_encoded);
+
+                if (bytes_encoded > 0)  {
+                    ssize_t client_sent = FrameToSocket(socks, header, bytes_to_write, sizeof(proxy_buf));
+
+                    if (client_sent < 0 && errno != EAGAIN) {
+                        perror("Error writing to client");
+                        break;
+                    }
+
+                    printf("Sent %zu bytes to client\n", client_sent);
                 }
-                printf("Sent %zu bytes to client\n", client_sent);
+
+                free(bytes_to_write);
             } else if (proxy_bytes == 0) {
                 printf("Proxy disconnected.\n");
                 break;

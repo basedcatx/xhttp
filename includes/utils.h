@@ -26,4 +26,5 @@ void printSocketAddress(const struct sockaddr *address, FILE *stream);
 int AcceptTCPConnection(int serveSocks);
 void generate_http_header(char *header, size_t header_size);
 
+
 #endif //XHTTP_UTILS_H

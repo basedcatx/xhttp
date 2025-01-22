@@ -3,10 +3,11 @@
 //
 
 #include <stdio.h>
-#include "../includes/utils.h"
+
 #include <stdint.h>
-#include "../includes/packet.h"
+
 #include "../includes/crypt.h"
+#include "../includes/packet.h"
 
 
 int main (int argc, char *argv[]) {
