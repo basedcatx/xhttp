@@ -10,7 +10,7 @@
 #include <pthread.h>
 
 #define DEF_LOCAL_PORT "8090"
-#define PROXY_HOST "localhost"
+#define PROXY_HOST "167.71.189.187"
 #define PROXY_PORT "8080"
 
 int serverSock = -1;
@@ -154,7 +154,6 @@ void *handle_client_thread(void *args) {
             if (client_bytes > 0) {
                 pck.msgLength = client_bytes;
                 memcpy(&pck.message, client_buf, client_bytes);
-                pck.flag |= IS_REQUEST_FLAG;
                 int bytes_to_send_written = 0;
                 uint8_t *bytes_to_send = BufferEncode(&pck, sizeof(pck), &bytes_to_send_written);
 
@@ -166,7 +165,7 @@ void *handle_client_thread(void *args) {
                         break;
                     }
 
-                    printf("Sent %zu bytes to proxy\n", proxy_sent);
+                    printf("Sent %zu bytes to server\n\n", proxy_sent);
                 }
 
                 free(bytes_to_send);
@@ -184,12 +183,18 @@ void *handle_client_thread(void *args) {
         if (FD_ISSET(proxySocket, &read_fd_set)) {
             struct Packet pck;
             memset(&pck, 0, sizeof(pck));
-
             ssize_t proxy_bytes = read(proxySocket, proxy_buf, sizeof(proxy_buf));
 
-            if (BufferDecode(proxy_buf, sizeof(proxy_buf), &pck) < 0) {
+
+            if (BufferDecode(proxy_buf + 40, sizeof(proxy_buf), &pck) < 0) {
                 LogErrorWithReason("[LOG]", "Failed to decode data from proxy!");
                 break;
+            } else {
+                printf("Decoded Packet:\n");
+                printf("Message Length: %u\n", pck.msgLength);
+                printf("Struct Size: %u\n", pck.structSize);
+                printf("Flag: %02x\n", pck.flag);
+                printf("Message: %.*s\n", pck.msgLength, pck.message);
             }
 
             if (proxy_bytes > 0) {
@@ -200,7 +205,7 @@ void *handle_client_thread(void *args) {
                     break;
                 }
 
-                printf("Sent %zu bytes to client\n", client_sent);
+                printf("Sent %zu bytes to local port\n", client_sent);
             } else if (proxy_bytes == 0) {
                 printf("Proxy disconnected.\n");
                 break;

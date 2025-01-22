@@ -116,7 +116,7 @@ void *handle_client_thread(void *args) {
 
     printf("New client connected: %d\n", socks);
 
-    uint8_t client_buf[STREAM_BUF_SIZE];
+    uint8_t client_buf[STREAM_BUF_SIZE + 40];
     uint8_t proxy_buf[STREAM_BUF_SIZE];
 
     while (1) {
@@ -148,17 +148,23 @@ void *handle_client_thread(void *args) {
             struct Packet pck;
             memset(&pck, 0, sizeof(pck));
 
-            ssize_t client_bytes = FrameFromSocket(socks, (const char *) &header, client_buf, sizeof(client_buf));
+//            ssize_t client_bytes = FrameFromSocket(socks, (const char *) &header, client_buf, sizeof(client_buf));
+              ssize_t client_bytes = read(socks, client_buf, sizeof(client_buf));
 
-
-            if (BufferDecode(client_buf, sizeof(client_buf), &pck) < 0) {
+            if (BufferDecode(client_buf + 40, sizeof(client_buf), &pck) < 0) {
                 LogErrorWithReason("[LOG]", "Failed to decode data from client!");
                 continue;
+            } else {
+                printf("Decoded Packet:\n");
+                printf("Message Length: %u\n", pck.msgLength);
+                printf("Struct Size: %u\n", pck.structSize);
+                printf("Flag: %02x\n", pck.flag);
+                printf("Message: %.*s\n", pck.msgLength, pck.message);
             }
 
             if (client_bytes > 0) {
 
-                ssize_t proxy_sent = write(proxySocket, pck.message, sizeof(pck.message));
+                ssize_t proxy_sent = write(proxySocket, pck.message, pck.msgLength);
 
                 if (proxy_sent < 0 && errno != EAGAIN) {
                     perror("Error writing to proxy");
@@ -177,17 +183,24 @@ void *handle_client_thread(void *args) {
 
         // Handle data from proxy to client
         if (FD_ISSET(proxySocket, &read_fd_set)) {
+
             struct Packet pck;
             memset(&pck, 0, sizeof(pck));
-            pck.flag |= IS_RESPONSE_FLAG;
 
-            ssize_t proxy_bytes = read(proxySocket, proxy_buf, sizeof(proxy_buf));
+            ssize_t proxy_bytes = read(proxySocket, proxy_buf, sizeof(proxy_buf) - 1);
 
             if (proxy_bytes > 0) {
+                proxy_buf[proxy_bytes] = '\0';
+                printf("Proxy Bytes: %zu\n", proxy_bytes);
+                printf("Proxy Buffer: %s\n", proxy_buf);
 
-                memcpy(pck.message, proxy_buf, sizeof(pck.message));
+                strncpy((char *) pck.message, (char *) proxy_buf, strlen((char *) proxy_buf));
+                pck.msgLength = strlen((char *) proxy_buf);
+
+                printf("Message From proxy: %.*s\n", pck.msgLength, proxy_buf);
                 int bytes_encoded = 0;
-                uint8_t *bytes_to_write = BufferEncode(&pck, sizeof(proxy_buf), &bytes_encoded);
+
+                uint8_t *bytes_to_write = BufferEncode(&pck, sizeof(pck), &bytes_encoded);
 
                 if (bytes_encoded > 0)  {
                     ssize_t client_sent = FrameToSocket(socks, header, bytes_to_write, sizeof(proxy_buf));
@@ -197,7 +210,7 @@ void *handle_client_thread(void *args) {
                         break;
                     }
 
-                    printf("Sent %zu bytes to client\n", client_sent);
+                    printf("Sent %zu bytes to connected-local-client\n", client_sent);
                 }
 
                 free(bytes_to_write);
