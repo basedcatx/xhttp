@@ -152,7 +152,7 @@ void *handle_client_thread(void *args) {
               ssize_t client_bytes = read(socks, client_buf, sizeof(client_buf));
 
             if (BufferDecode(client_buf + 40, sizeof(client_buf), &pck) < 0) {
-                LogErrorWithReason("[LOG]", "Failed to decode data from client!");
+                printf("[LOG] : Failed to decode data from client! got %zd bytes\n", client_bytes);
                 continue;
             } else {
                 printf("Decoded Packet:\n");

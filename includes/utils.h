@@ -15,7 +15,7 @@
 #include <arpa/inet.h>
 #include "packet.h"
 
-#define STREAM_BUF_SIZE BUFSIZ
+#define STREAM_BUF_SIZE BUFSIZ * 3
 
 void set_nonblocking_socket(int sock);
 int CreateServerSocket(const char *service);

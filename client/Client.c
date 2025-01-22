@@ -10,7 +10,7 @@
 #include <pthread.h>
 
 #define DEF_LOCAL_PORT "8090"
-#define PROXY_HOST "167.71.189.187"
+#define PROXY_HOST "localhost"
 #define PROXY_PORT "8080"
 
 int serverSock = -1;

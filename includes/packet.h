@@ -31,7 +31,7 @@ struct Packet {
     uint32_t msgLength;
     uint32_t structSize;
     uint8_t flag;
-    uint8_t message[BUFSIZ];
+    uint8_t message[BUFSIZ * 3];
 };
 
 uint8_t *BufferEncode(struct Packet *pck, size_t bufSize, int *bytesWritten);
