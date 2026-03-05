@@ -205,8 +205,7 @@ Decrypt → Decompress → BufferDecode → Extract message → Forward to Local
 #define DEF_LOCAL_PORT "8080"              // Server listening port
 #define PROXY_HOST "localhost"             // Upstream proxy host
 #define PROXY_PORT "3128"                  // Upstream proxy port (Squid default)
-
----
+```
 
 
 ## Glossary of Codebase-Specific Terms
